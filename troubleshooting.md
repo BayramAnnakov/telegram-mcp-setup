@@ -141,7 +141,17 @@ docker run -it --rm bayramannakov/telegram-mcp:latest python setup_wizard.py
 ```
 
 ### MCP server not responding
+
+**First check:** Verify your launcher script uses `docker run --rm -i`, not `docker run --rm`. The `-i` flag keeps stdin open, which is required for MCP's stdin/stdout JSON-RPC protocol. Without it, Docker closes stdin immediately and the MCP server can't communicate with Claude Code.
+
 ```bash
+# Check the launcher script
+cat ~/.local/bin/telegram-mcp-docker | grep "docker run"
+# Should show: docker run --rm -i \
+
+# If missing -i, fix it:
+# Edit ~/.local/bin/telegram-mcp-docker and add -i after --rm
+
 # Remove and re-register
 claude mcp remove telegram-mcp
 claude mcp add telegram-mcp -s user -- ~/.local/bin/telegram-mcp-docker
@@ -158,6 +168,44 @@ Most common cause: **Docker Desktop is not running.** Check:
 - Windows: Look for Docker icon in system tray
 - Start Docker Desktop and wait 1-2 min
 - No need to re-register — just restart Docker
+
+### "claude: command not found"
+
+If `claude` CLI is not found, it may be installed via npx rather than globally. Options:
+
+1. **Use npx directly:**
+   ```bash
+   npx --yes @anthropic-ai/claude-code mcp add telegram-mcp -s user -- ~/.local/bin/telegram-mcp-docker
+   ```
+
+2. **Install globally (recommended):**
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   ```
+
+After global install, `claude` will be available system-wide.
+
+### MCP returns errors or garbled responses
+
+Caused by the Docker image printing startup messages to stdout, which pollutes the MCP JSON-RPC protocol channel. Claude Code receives a mix of plain text and JSON, causing parse errors.
+
+**Fix:** Update to the latest Docker image:
+```bash
+docker pull bayramannakov/telegram-mcp:latest
+```
+
+The latest image redirects all startup messages to stderr, keeping stdout clean for MCP communication.
+
+### Multiple Docker images appearing
+
+This is normal when the Docker image is updated. Claude Code's auto-troubleshooting may also pull or build extra images when the MCP server fails to connect.
+
+Clean up old images:
+```bash
+docker image prune
+```
+
+This removes dangling (unused) images. Your current `bayramannakov/telegram-mcp:latest` image will not be affected.
 
 ### High memory usage
 - Docker Desktop settings > Resources > limit memory to 2GB

@@ -236,7 +236,7 @@ if [ -z "$TELEGRAM_API_ID" ] || [ -z "$TELEGRAM_API_HASH" ] || [ -z "$TELEGRAM_S
     exit 1
 fi
 
-docker run --rm \
+docker run --rm -i \
     -e TELEGRAM_API_ID \
     -e TELEGRAM_API_HASH \
     -e TELEGRAM_SESSION_STRING \
@@ -267,6 +267,13 @@ uv run python main.py 2>/dev/null || python3 -m telegram_mcp 2>/dev/null
 
 Register with Claude Code:
 ```bash
+# Check if claude CLI is available (npx users may need this)
+if ! command -v claude &>/dev/null; then
+    echo "claude CLI not found. If installed via npx, run:"
+    echo '  npx --yes @anthropic-ai/claude-code mcp add telegram-mcp -s user -- ~/.local/bin/telegram-mcp-docker'
+    echo "Or install globally: npm install -g @anthropic-ai/claude-code"
+fi
+
 claude mcp add telegram-mcp -s user -- ~/.local/bin/telegram-mcp-docker
 ```
 

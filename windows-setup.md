@@ -132,7 +132,7 @@ Set-Acl "$env:USERPROFILE\.config\telegram-mcp\.env" $acl
 ### If using environment variables (Option A):
 
 ```powershell
-claude mcp add telegram-mcp -s user -- docker run --rm -e TELEGRAM_API_ID -e TELEGRAM_API_HASH -e TELEGRAM_SESSION_STRING bayramannakov/telegram-mcp:latest
+claude mcp add telegram-mcp -s user -- docker run --rm -i -e TELEGRAM_API_ID -e TELEGRAM_API_HASH -e TELEGRAM_SESSION_STRING bayramannakov/telegram-mcp:latest
 ```
 
 ### If using config file (Option B):
@@ -144,7 +144,7 @@ Create a launcher script at `$env:USERPROFILE\.local\bin\telegram-mcp.bat`:
 for /f "usebackq tokens=1,2 delims==" %%a in ("%USERPROFILE%\.config\telegram-mcp\.env") do (
     set %%a=%%b
 )
-docker run --rm -e TELEGRAM_API_ID -e TELEGRAM_API_HASH -e TELEGRAM_SESSION_STRING bayramannakov/telegram-mcp:latest
+docker run --rm -i -e TELEGRAM_API_ID -e TELEGRAM_API_HASH -e TELEGRAM_SESSION_STRING bayramannakov/telegram-mcp:latest
 ```
 
 Then register:
@@ -234,7 +234,7 @@ Then update your environment variable or config file with the new session string
 **MCP server not appearing**
 ```powershell
 claude mcp remove telegram-mcp
-claude mcp add telegram-mcp -s user -- docker run --rm -e TELEGRAM_API_ID -e TELEGRAM_API_HASH -e TELEGRAM_SESSION_STRING bayramannakov/telegram-mcp:latest
+claude mcp add telegram-mcp -s user -- docker run --rm -i -e TELEGRAM_API_ID -e TELEGRAM_API_HASH -e TELEGRAM_SESSION_STRING bayramannakov/telegram-mcp:latest
 claude mcp list
 ```
 Then restart Claude Code.

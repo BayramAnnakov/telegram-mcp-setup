@@ -126,7 +126,7 @@ Docker Desktop > Settings > General > "Start Docker Desktop when you log in"
 The launcher script at `~/.local/bin/telegram-mcp-docker`:
 1. Reads credentials from Keychain using the `security` command
 2. Passes them as environment variables to the Docker container
-3. Runs the telegram-mcp server
+3. Runs the telegram-mcp server with `docker run --rm -i` (the `-i` flag is **required** — it keeps stdin open for MCP's stdin/stdout JSON-RPC protocol; without it, Docker closes stdin and the MCP server can't communicate with Claude Code)
 
 The script is created automatically by the skill. If you need to recreate it manually, see the main SKILL.md Step 4.
 

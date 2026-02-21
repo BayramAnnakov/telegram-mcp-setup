@@ -31,10 +31,22 @@ Browser automation cannot solve CAPTCHAs. The user must:
 3. Navigate to "API development tools" manually if needed
 
 ### Verification code not arriving
-- Check ALL devices with Telegram (phone, desktop, web)
-- Telegram sends to active sessions first, then SMS after a delay
-- If no active sessions, Telegram uses SMS (may take 1-2 minutes)
-- If using a VoIP number, SMS may not work — use a real phone number
+
+Since February 2023, Telegram has been silently suppressing verification codes for some accounts when authenticating new API sessions. The `send_code_request()` call returns success, but the code never arrives — not via in-app message, not via SMS. This is a known upstream issue documented in Telethon #3835, #4041, and #4050 with no reliable workaround.
+
+**What does NOT help:**
+- Waiting longer (the code will never arrive for affected accounts)
+- Requesting new codes repeatedly (triggers rate limiting / FloodWait)
+- Using a VPN or different network
+- Reinstalling Telegram
+- Using SMS fallback (Telegram suppresses that too)
+
+**What to try first:**
+- Check ALL devices with Telegram (phone, desktop, web) — codes go to active sessions first
+- Wait 2 full minutes before concluding the code isn't coming
+- If using a VoIP number, try a real phone number instead
+
+**Solution:** Use **QR code login** (Option QR in the main skill). QR login uses a completely different authentication flow that bypasses code delivery entirely. The user scans a QR code in Telegram (Settings > Devices > Link Desktop Device) instead of entering a verification code.
 
 ### "Short name already taken"
 The short name must be globally unique across ALL Telegram apps. Try:
@@ -46,6 +58,22 @@ The short name must be globally unique across ALL Telegram apps. Try:
 my.telegram.org rate-limits login attempts. Wait 15-30 minutes and try again. Do NOT repeatedly click "Send code."
 
 ## During Session Generation
+
+### "externally-managed-environment" error (PEP 668)
+
+Homebrew Python 3.12+ refuses bare `pip3 install` commands to protect the system Python environment:
+```
+error: externally-managed-environment
+```
+
+**Fix:** Use a virtual environment:
+```bash
+python3 -m venv /tmp/telegram-session-venv
+/tmp/telegram-session-venv/bin/pip install telethon
+/tmp/telegram-session-venv/bin/python /tmp/telegram-session-gen.py
+```
+
+Do NOT use `--break-system-packages` — it bypasses the protection and can cause system Python issues. The venv approach is cleaner and equally fast.
 
 ### "PHONE_NUMBER_INVALID"
 Use international format:
@@ -117,25 +145,34 @@ Too many API calls. Space out requests:
 Session string no longer valid. Regenerate:
 
 **macOS:**
+
+Use the QR login script from the main skill (Option QR), or regenerate with a venv in a **separate Terminal window**:
 ```bash
-# Regenerate (in a separate Terminal window)
-pip3 install telethon  # if not installed
-python3 -c "
+python3 -m venv /tmp/telegram-session-venv
+/tmp/telegram-session-venv/bin/pip install telethon
+```
+
+Write a script to `/tmp/telegram-session-gen.py`:
+```python
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 api_id = int(input('API ID: '))
 api_hash = input('API Hash: ')
 with TelegramClient(StringSession(), api_id, api_hash) as client:
     print(client.session.save())
-"
+```
 
-# Update Keychain
+Then run:
+```bash
+/tmp/telegram-session-venv/bin/python /tmp/telegram-session-gen.py
+
+# Update Keychain with the new session string
 security add-generic-password -a "session_string" -s "telegram-mcp" -w 'NEW_SESSION_STRING' -U
 ```
 
 **Windows:**
 ```powershell
-docker run -it --rm bayramannakov/telegram-mcp:latest python setup_wizard.py
+docker run -it --rm bayramannakov/telegram-mcp:latest python session_string_generator.py
 # Then update environment variable:
 [System.Environment]::SetEnvironmentVariable('TELEGRAM_SESSION_STRING', 'NEW_STRING', 'User')
 ```
@@ -185,16 +222,76 @@ If `claude` CLI is not found, it may be installed via npx rather than globally. 
 
 After global install, `claude` will be available system-wide.
 
-### MCP returns errors or garbled responses
+### `claude mcp add` fails or hangs inside Claude Code
 
-Caused by the Docker image printing startup messages to stdout, which pollutes the MCP JSON-RPC protocol channel. Claude Code receives a mix of plain text and JSON, causing parse errors.
+Running `claude mcp add` from within an active Claude Code session (i.e., when Claude runs it via the Bash tool) will fail or hang because it tries to spawn a nested Claude process.
 
-**Fix:** Update to the latest Docker image:
-```bash
-docker pull bayramannakov/telegram-mcp:latest
+**Workaround 1 (preferred): Edit config directly**
+
+Claude should edit `~/.claude.json` using the Read and Write tools:
+1. Read `~/.claude.json`
+2. Add the `telegram-mcp` entry to the `mcpServers` object
+3. Write the file back
+
+```json
+{
+  "mcpServers": {
+    "telegram-mcp": {
+      "command": "/Users/USERNAME/.local/bin/telegram-mcp-docker",
+      "scope": "user"
+    }
+  }
+}
 ```
 
-The latest image redirects all startup messages to stderr, keeping stdout clean for MCP communication.
+**Workaround 2: Separate terminal**
+
+Tell the user to run `claude mcp add` in a **separate Terminal window** (not the one running Claude Code):
+```bash
+claude mcp add telegram-mcp -s user -- ~/.local/bin/telegram-mcp-docker
+```
+
+**Workaround 3: Full binary path**
+
+If Claude Code was installed via npm globally, use the full path:
+```bash
+/usr/local/bin/claude mcp add telegram-mcp -s user -- ~/.local/bin/telegram-mcp-docker
+```
+
+### MCP returns errors or garbled responses
+
+**Root cause:** The Docker image's `main.py` has `print()` calls to stdout before `mcp.run_stdio_async()` starts. MCP uses stdout exclusively for JSON-RPC communication — any non-JSON output on stdout corrupts the protocol and causes Claude Code to receive parse errors or garbled data.
+
+**Diagnostic:** Run the launcher script and check what appears on stdout:
+```bash
+~/.local/bin/telegram-mcp-docker > /tmp/tg-stdout.log 2>/tmp/tg-stderr.log &
+sleep 3 && kill %1
+cat /tmp/tg-stdout.log
+```
+If stdout contains any text (like "Starting server..." or similar), the print-redirect fix is needed.
+
+**Fix:** Update the launcher script (`~/.local/bin/telegram-mcp-docker`) to use the `python -c` wrapper that monkey-patches `builtins.print` to redirect to stderr. The `docker run` line should be:
+```bash
+docker run --rm -i \
+    -e TELEGRAM_API_ID \
+    -e TELEGRAM_API_HASH \
+    -e TELEGRAM_SESSION_STRING \
+    bayramannakov/telegram-mcp:latest \
+    python -c "
+import builtins, sys
+_original_print = builtins.print
+def _stderr_print(*args, **kwargs):
+    kwargs.setdefault('file', sys.stderr)
+    _original_print(*args, **kwargs)
+builtins.print = _stderr_print
+from main import main
+main()
+"
+```
+
+**Why monkey-patch instead of shell redirection?** MCP needs stdout open and clean for JSON-RPC. We can't redirect stdout because MCP uses it. The monkey-patch only intercepts the specific `print()` calls in `main.py` that pollute stdout before `mcp.run_stdio_async()` takes over.
+
+Also verify the `-i` flag is present — without it, Docker closes stdin and MCP can't communicate.
 
 ### Multiple Docker images appearing
 

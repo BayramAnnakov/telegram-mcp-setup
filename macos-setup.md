@@ -28,6 +28,12 @@ brew install python3
 # https://www.python.org/downloads/
 ```
 
+**PEP 668 note:** Homebrew Python 3.12+ blocks bare `pip3 install` commands with an "externally-managed-environment" error. Always use a virtual environment when installing packages:
+```bash
+python3 -m venv /tmp/telegram-session-venv
+/tmp/telegram-session-venv/bin/pip install telethon
+```
+
 ### Option 2: Docker Desktop
 
 Download size: ~1.1GB. Installed size: ~4GB. Requires ~2GB free for containers.
@@ -127,6 +133,7 @@ The launcher script at `~/.local/bin/telegram-mcp-docker`:
 1. Reads credentials from Keychain using the `security` command
 2. Passes them as environment variables to the Docker container
 3. Runs the telegram-mcp server with `docker run --rm -i` (the `-i` flag is **required** — it keeps stdin open for MCP's stdin/stdout JSON-RPC protocol; without it, Docker closes stdin and the MCP server can't communicate with Claude Code)
+4. Uses a `python -c` wrapper that monkey-patches `builtins.print` to redirect to stderr — this is needed because the upstream Docker image's `main.py` has `print()` calls to stdout before `mcp.run_stdio_async()` starts, which corrupts the JSON-RPC channel. The wrapper keeps stdout clean for MCP communication.
 
 The script is created automatically by the skill. If you need to recreate it manually, see the main SKILL.md Step 4.
 

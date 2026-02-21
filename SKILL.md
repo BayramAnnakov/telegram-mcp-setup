@@ -14,7 +14,7 @@ compatibility: |
   Session generation: Python 3.10+ (lightest), Docker, or uv.
 metadata:
   author: Bayram Annakov (onsa.ai)
-  version: "2.0.0"
+  version: "2.1.0"
   category: setup
   telegram-mcp-repo: https://github.com/chigwell/telegram-mcp
 allowed-tools:
@@ -83,8 +83,8 @@ echo "Claude CLI: $(claude --version 2>/dev/null || echo 'NOT FOUND')"
 ```
 
 Based on results, choose the lightest path:
-- **Python 3 + pip available** → Option A (lightest, no Docker needed)
-- **Docker available** → Option B (heavier but self-contained)
+- **Python 3 available** → Option QR (recommended) or Option B (lightest, no Docker needed)
+- **Docker available** → Option C (self-contained)
 - **Nothing available** → Install Python first: `brew install python3` or download from python.org
 
 ## Time Estimates (Honest)
@@ -139,19 +139,91 @@ Telegram requires every app to register — like getting a key card for a buildi
 
 ### Step 2: Generate Session String (~3-5 min)
 
-**IMPORTANT: This step requires an interactive terminal.** Claude Code's Bash tool may not support interactive input (the `-it` flag). **Instruct the user to open a separate Terminal window** and run the command there. You can tell them:
+**IMPORTANT: This step requires an interactive terminal.** Claude Code's Bash tool does not support interactive input. **Instruct the user to open a separate Terminal window** and run the commands there. Tell them:
 
-> "Open Terminal (Cmd+Space, type 'Terminal', press Enter) and paste this command. You'll need to enter your phone number, verification code, and 2FA password if you have one."
+> "Open Terminal (Cmd+Space, type 'Terminal', press Enter). You'll run a Python script that asks for your phone number, verification code, and 2FA password if you have one."
 
 **IMPORTANT: If the user has 2FA enabled**, they must know their 2FA password BEFORE starting. If they've forgotten it, they need to recover it via Telegram Settings first. This step cannot proceed without it.
 
-**Option A: Python + pip (Lightest — no Docker needed)**
-```bash
-# Install telethon (Telegram client library)
-pip3 install telethon
+**WARNING: Telegram may silently suppress verification codes.** Since February 2023, some accounts never receive SMS or in-app codes when authenticating new sessions — Telegram returns success but the code never arrives. This is a known upstream issue (Telethon #3835, #4041, #4050) with no reliable workaround. If the verification code doesn't arrive within 2 minutes, use **Option QR** below — QR code login bypasses this problem entirely.
 
-# Run session generator (interactive — user must type in terminal)
-python3 -c "
+**Option QR: QR Code Login (Recommended)**
+
+QR code login avoids both the verification code delivery problem and multi-line paste issues. Claude should write a temp script file using the Write tool.
+
+Write this to `/tmp/telegram-session-qr.py`:
+```python
+import asyncio, sys
+
+async def main():
+    from telethon import TelegramClient
+    from telethon.sessions import StringSession
+    from telethon.errors import SessionPasswordNeededError
+
+    api_id = int(input('Enter API ID: '))
+    api_hash = input('Enter API Hash: ')
+
+    client = TelegramClient(StringSession(), api_id, api_hash)
+    await client.connect()
+
+    try:
+        import qrcode
+        has_qrcode = True
+    except ImportError:
+        has_qrcode = False
+        print('Note: qrcode package not found — printing raw URL instead.')
+        print('You can paste the URL into any QR code generator.\n')
+
+    while True:
+        qr_login = await client.qr_login()
+
+        if has_qrcode:
+            qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L)
+            qr.add_data(qr_login.url)
+            qr.make(fit=True)
+            print('\nScan this QR code with Telegram on your phone:')
+            print('(Telegram > Settings > Devices > Link Desktop Device)\n')
+            qr.print_ascii(invert=True)
+        else:
+            print(f'\nOpen this URL in a QR code generator and scan with Telegram:')
+            print(f'{qr_login.url}\n')
+            print('(Telegram > Settings > Devices > Link Desktop Device)')
+
+        try:
+            print('\nWaiting for you to scan... (expires in 30s)')
+            await qr_login.wait(timeout=30)
+            break
+        except asyncio.TimeoutError:
+            print('\nQR code expired. Generating a new one...')
+            continue
+        except SessionPasswordNeededError:
+            password = input('\n2FA is enabled. Enter your 2FA password: ')
+            await client.sign_in(password=password)
+            break
+
+    print('\n=== YOUR SESSION STRING (copy everything below) ===')
+    print(client.session.save())
+    print('=== END SESSION STRING ===')
+    await client.disconnect()
+
+asyncio.run(main())
+```
+
+Then instruct the user to run in their separate Terminal:
+```bash
+python3 -m venv /tmp/telegram-session-venv
+/tmp/telegram-session-venv/bin/pip install telethon qrcode
+/tmp/telegram-session-venv/bin/python /tmp/telegram-session-qr.py
+```
+
+The user scans the QR code in Telegram (Settings > Devices > Link Desktop Device), enters 2FA password if prompted, and gets the session string.
+
+**Option B: Python + venv (Lightest — no Docker needed)**
+
+> **Note:** Homebrew Python 3.12+ blocks bare `pip3 install` with a "externally-managed-environment" error (PEP 668). The venv below avoids this.
+
+Claude should write this to `/tmp/telegram-session-gen.py` using the Write tool:
+```python
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 
@@ -162,17 +234,23 @@ with TelegramClient(StringSession(), api_id, api_hash) as client:
     print('\n=== YOUR SESSION STRING (copy everything below) ===')
     print(client.session.save())
     print('=== END SESSION STRING ===')
-"
 ```
 
-**Option B: Docker**
+Then instruct the user to run in their separate Terminal:
+```bash
+python3 -m venv /tmp/telegram-session-venv
+/tmp/telegram-session-venv/bin/pip install telethon
+/tmp/telegram-session-venv/bin/python /tmp/telegram-session-gen.py
+```
+
+**Option C: Docker**
 ```bash
 # First pull takes 1-3 min depending on internet speed
-docker run -it --rm bayramannakov/telegram-mcp:latest python setup_wizard.py
+docker run -it --rm bayramannakov/telegram-mcp:latest python session_string_generator.py
 ```
 Note: Docker Desktop must be running. If not installed, it's a ~1GB download and needs ~4GB disk space.
 
-**Option C: Python + uv (if uv is available)**
+**Option D: Python + uv (if uv is available)**
 ```bash
 # Install uv if needed (prefer Homebrew over curl|sh):
 brew install uv
@@ -187,9 +265,11 @@ uv run python session_string_generator.py
 The user will be prompted for:
 1. API ID (from Step 1)
 2. API Hash (from Step 1)
-3. Phone number (with country code: +7...)
-4. Verification code (arrives in Telegram app — check all devices)
+3. Phone number (with country code: +7...) — *not needed for Option QR*
+4. Verification code (arrives in Telegram app — check all devices) — *not needed for Option QR*
 5. 2FA password (if enabled)
+
+**If the verification code doesn't arrive** (Options B/C/D): Wait 2 full minutes. Check ALL Telegram sessions (phone, desktop, web). Do NOT request new codes repeatedly — this triggers rate limiting. If nothing arrives after 2 minutes, cancel (Ctrl+C) and use **Option QR** instead.
 
 **Verification:** The output is a long string of ~300-400 characters (letters, numbers, +, /, =). If it's shorter than 100 characters, something went wrong. Ask the user to copy it carefully — trailing whitespace or missing characters will cause silent failures later.
 
@@ -236,11 +316,25 @@ if [ -z "$TELEGRAM_API_ID" ] || [ -z "$TELEGRAM_API_HASH" ] || [ -z "$TELEGRAM_S
     exit 1
 fi
 
+# -i keeps stdin open for MCP JSON-RPC protocol
+# python -c wrapper redirects print() to stderr — the Docker image's main.py
+# has print() calls to stdout before mcp.run_stdio_async() starts, which
+# corrupts the JSON-RPC channel. This monkey-patch keeps stdout clean.
 docker run --rm -i \
     -e TELEGRAM_API_ID \
     -e TELEGRAM_API_HASH \
     -e TELEGRAM_SESSION_STRING \
-    bayramannakov/telegram-mcp:latest
+    bayramannakov/telegram-mcp:latest \
+    python -c "
+import builtins, sys
+_original_print = builtins.print
+def _stderr_print(*args, **kwargs):
+    kwargs.setdefault('file', sys.stderr)
+    _original_print(*args, **kwargs)
+builtins.print = _stderr_print
+from main import main
+main()
+"
 ```
 
 Then run:
@@ -249,7 +343,7 @@ mkdir -p ~/.local/bin
 chmod +x ~/.local/bin/telegram-mcp-docker
 ```
 
-**If the user chose Option A (pip/Python) instead of Docker**, write this script instead:
+**If the user chose Option B or D (Python/venv/uv) instead of Docker**, write this script instead:
 ```bash
 #!/bin/bash
 export TELEGRAM_API_ID=$(security find-generic-password -a "api_id" -s "telegram-mcp" -w 2>/dev/null)
@@ -265,23 +359,37 @@ cd ~/telegram-mcp 2>/dev/null || cd "$(pip3 show telethon 2>/dev/null | grep Loc
 uv run python main.py 2>/dev/null || python3 -m telegram_mcp 2>/dev/null
 ```
 
-Register with Claude Code:
-```bash
-# Check if claude CLI is available (npx users may need this)
-if ! command -v claude &>/dev/null; then
-    echo "claude CLI not found. If installed via npx, run:"
-    echo '  npx --yes @anthropic-ai/claude-code mcp add telegram-mcp -s user -- ~/.local/bin/telegram-mcp-docker'
-    echo "Or install globally: npm install -g @anthropic-ai/claude-code"
-fi
+**Register with Claude Code:**
 
+> **Note:** `claude mcp add` cannot run from inside an active Claude Code session (it will fail or hang). Use the direct config approach below instead.
+
+Claude should register the MCP server by editing `~/.claude.json` directly:
+
+1. Read the current config with the Read tool: `~/.claude.json`
+2. Add `telegram-mcp` to the `mcpServers` object (preserve any existing servers):
+   ```json
+   {
+     "mcpServers": {
+       "telegram-mcp": {
+         "command": "/Users/USERNAME/.local/bin/telegram-mcp-docker",
+         "scope": "user"
+       }
+     }
+   }
+   ```
+   Replace `USERNAME` with the actual username (from `whoami` or `$HOME`).
+3. Write the updated config back with the Write tool.
+
+**Fallback:** If direct config editing isn't suitable, tell the user to run this in a **separate Terminal** (not inside Claude Code):
+```bash
 claude mcp add telegram-mcp -s user -- ~/.local/bin/telegram-mcp-docker
 ```
 
 **Verification:**
 ```bash
-claude mcp list | grep telegram
+python3 -c "import json; c=json.load(open('$HOME/.claude.json')); print('telegram-mcp' in c.get('mcpServers',{}))"
 ```
-Should show `telegram-mcp` in the list.
+Should print `True`.
 
 **Important: If using Docker**, Docker Desktop must be running every time the user uses Telegram in Claude Code. If they close Docker Desktop, Telegram tools will silently stop working. Tell the user this.
 

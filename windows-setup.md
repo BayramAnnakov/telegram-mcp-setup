@@ -72,7 +72,7 @@ This is the same on all platforms:
 Open a **new PowerShell window** (this is interactive — you'll type answers):
 
 ```powershell
-docker run -it --rm bayramannakov/telegram-mcp:latest python setup_wizard.py
+docker run -it --rm bayramannakov/telegram-mcp:latest python session_string_generator.py
 ```
 
 You'll be prompted for:
@@ -131,8 +131,12 @@ Set-Acl "$env:USERPROFILE\.config\telegram-mcp\.env" $acl
 
 ### If using environment variables (Option A):
 
+> **Note:** The Docker image's `main.py` prints startup messages to stdout, which corrupts MCP's JSON-RPC protocol. The command below uses a `python -c` wrapper to redirect `print()` to stderr, keeping stdout clean.
+
+> **Note:** Run `claude mcp add` from a **separate PowerShell window**, not inside an active Claude Code session (it will fail or hang inside a nested session).
+
 ```powershell
-claude mcp add telegram-mcp -s user -- docker run --rm -i -e TELEGRAM_API_ID -e TELEGRAM_API_HASH -e TELEGRAM_SESSION_STRING bayramannakov/telegram-mcp:latest
+claude mcp add telegram-mcp -s user -- docker run --rm -i -e TELEGRAM_API_ID -e TELEGRAM_API_HASH -e TELEGRAM_SESSION_STRING bayramannakov/telegram-mcp:latest python -c "import builtins,sys;_p=builtins.print;builtins.print=lambda *a,**k:_p(*a,**dict(k,file=k.get('file',sys.stderr)));from main import main;main()"
 ```
 
 ### If using config file (Option B):
@@ -144,7 +148,7 @@ Create a launcher script at `$env:USERPROFILE\.local\bin\telegram-mcp.bat`:
 for /f "usebackq tokens=1,2 delims==" %%a in ("%USERPROFILE%\.config\telegram-mcp\.env") do (
     set %%a=%%b
 )
-docker run --rm -i -e TELEGRAM_API_ID -e TELEGRAM_API_HASH -e TELEGRAM_SESSION_STRING bayramannakov/telegram-mcp:latest
+docker run --rm -i -e TELEGRAM_API_ID -e TELEGRAM_API_HASH -e TELEGRAM_SESSION_STRING bayramannakov/telegram-mcp:latest python -c "import builtins,sys;_p=builtins.print;builtins.print=lambda *a,**k:_p(*a,**dict(k,file=k.get('file',sys.stderr)));from main import main;main()"
 ```
 
 Then register:
@@ -227,14 +231,16 @@ Install via: `winget install Python.Python.3.12` or download from python.org. No
 **Session expired**
 Regenerate in PowerShell:
 ```powershell
-docker run -it --rm bayramannakov/telegram-mcp:latest python setup_wizard.py
+docker run -it --rm bayramannakov/telegram-mcp:latest python session_string_generator.py
 ```
 Then update your environment variable or config file with the new session string.
 
 **MCP server not appearing**
+
+Run in a **separate PowerShell** (not inside Claude Code):
 ```powershell
 claude mcp remove telegram-mcp
-claude mcp add telegram-mcp -s user -- docker run --rm -i -e TELEGRAM_API_ID -e TELEGRAM_API_HASH -e TELEGRAM_SESSION_STRING bayramannakov/telegram-mcp:latest
+claude mcp add telegram-mcp -s user -- docker run --rm -i -e TELEGRAM_API_ID -e TELEGRAM_API_HASH -e TELEGRAM_SESSION_STRING bayramannakov/telegram-mcp:latest python -c "import builtins,sys;_p=builtins.print;builtins.print=lambda *a,**k:_p(*a,**dict(k,file=k.get('file',sys.stderr)));from main import main;main()"
 claude mcp list
 ```
 Then restart Claude Code.

@@ -177,6 +177,38 @@ docker run -it --rm bayramannakov/telegram-mcp:latest python session_string_gene
 [System.Environment]::SetEnvironmentVariable('TELEGRAM_SESSION_STRING', 'NEW_STRING', 'User')
 ```
 
+### "AuthKeyDuplicatedError" — Telegram permanently killed your session key
+
+**Symptom:** telegram-mcp connects but tools fail; `mcp_errors.log` shows:
+```
+AuthKeyDuplicatedError: The authorization key (session file) was used under two
+different IP addresses simultaneously, and can no longer be used.
+```
+
+**Cause:** the SAME session string was used by **two live connections at the same time** —
+e.g. an interactive Claude window *plus* a scheduled/headless job, or two Claude windows
+open at once. When Telegram sees one auth key on two connections it kills the key
+**permanently** — retries don't help, you must re-issue it. (This is different from
+`AUTH_KEY_UNREGISTERED`, which is an expired/terminated session.)
+
+**Immediate recovery:** regenerate the session string via QR login (Option QR) and update
+Keychain — same steps as `AUTH_KEY_UNREGISTERED` above.
+
+**Permanent fixes — pick one:**
+- **Separate session per consumer (simplest).** Give each scheduled/headless job its OWN
+  session string: one extra QR login → store as a second Keychain entry
+  (`session_string_scheduler`) → point only that job at it. Two different keys can never
+  collide, even simultaneously, even across IPs. Tip: set `TELEGRAM_DEVICE_MODEL` when
+  generating it so the extra session is labeled in Telegram > Settings > Devices.
+- **Centralize (best if you run multiple windows).** Run telegram-mcp ONCE as a local
+  HTTP service that every window + job shares — see "Running multiple windows or
+  scheduled jobs" in the main skill. One process holds the single connection, so the key
+  can't duplicate, and Telegram stays available in all windows at once.
+
+**Do NOT** put telegram-mcp behind a generic stdio→HTTP gateway (e.g. supergateway/
+mcp-proxy) in stateless mode — it spawns a fresh connection per request and makes this
+worse. Use the image's own HTTP transport (`MCP_TRANSPORT=http`).
+
 ### MCP server not responding
 
 **First check:** Verify your launcher script uses `docker run --rm -i`, not `docker run --rm`. The `-i` flag keeps stdin open, which is required for MCP's stdin/stdout JSON-RPC protocol. Without it, Docker closes stdin immediately and the MCP server can't communicate with Claude Code.

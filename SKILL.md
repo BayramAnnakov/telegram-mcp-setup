@@ -405,6 +405,45 @@ Use list_chats to verify the connection works.
 
 **Verification:** A list of the user's Telegram chats should appear. If not, see Troubleshooting below.
 
+## Running multiple windows or scheduled jobs (avoid AuthKeyDuplicatedError)
+
+**Important:** a single session string must never be used by **two live connections at
+once**. The default stdio setup spawns one telegram-mcp process *per Claude window*, so
+two open windows — or an interactive window plus a scheduled/headless job (e.g. a morning
+brief) — both connect with the same key. Telegram then **permanently kills the key**
+(`AuthKeyDuplicatedError`); only a re-issued session string recovers it.
+
+If the user will run more than one window, or any scheduled/background job that reads
+Telegram, set this up so it can't happen. **Centralize (Option A) is the recommended
+fix;** a separate per-job session (Option B) is the no-Docker fallback.
+
+**Option A — Centralize over HTTP (recommended).** Run telegram-mcp **once** as a
+long-lived local service that every window + job shares, so there's only ever one
+connection:
+```bash
+docker run -d --name telegram-mcp-http --restart unless-stopped \
+  -p 127.0.0.1:8765:8765 \
+  -e MCP_TRANSPORT=http -e MCP_HOST=0.0.0.0 -e MCP_PORT=8765 \
+  -e TELEGRAM_API_ID="$(security find-generic-password -a api_id -s telegram-mcp -w)" \
+  -e TELEGRAM_API_HASH="$(security find-generic-password -a api_hash -s telegram-mcp -w)" \
+  -e TELEGRAM_SESSION_STRING="$(security find-generic-password -a session_string -s telegram-mcp -w)" \
+  bayramannakov/telegram-mcp:latest
+```
+Then register in `~/.claude.json` with the HTTP transport **instead of** the `command`
+entry (and keep the port bound to `127.0.0.1` only — it's full account access):
+```json
+"telegram-mcp": { "type": "http", "url": "http://127.0.0.1:8765/mcp" }
+```
+Now all windows + jobs share one connection — the key can't duplicate and Telegram works
+in every window at once. (`MCP_TRANSPORT=sse` + `type:sse` also works for older clients.)
+Keep mode default (`all`) if you use drafts/sending.
+
+**Option B — Separate session per job (no-Docker fallback).** Give each scheduled/headless
+job its OWN session string: run the QR generator again, store it under a second Keychain
+account (e.g. `session_string_scheduler`), and point only that job at it. Two different
+keys never collide. Set `TELEGRAM_DEVICE_MODEL` when generating it so it's labeled in
+Telegram > Settings > Devices.
+
 ## Session String: Understanding the Risks
 
 Be honest with users about what the session string can do. It is **more sensitive than a password** because:
@@ -421,7 +460,13 @@ Be honest with users about what the session string can do. It is **more sensitiv
 - Join/leave groups, create channels
 - All of the above **silently**, without triggering any alert
 
-**Current limitation:** telegram-mcp provides full account access. There is no read-only mode or per-chat filtering. When Claude reads your chats, it has access to all of them. This is a known limitation.
+**Read-only mode (recommended for cautious setups):** the image supports
+`TELEGRAM_EXPOSED_TOOLS=read-only`, which exposes only read tools (get/list/search) and
+hides every write/destructive tool (send, delete, ban, edit, draft, …). Set it as an env
+var on the launcher/service. **Caveat:** if you use drafts or sending, keep the default
+(`all`) — read-only hides `save_draft`/`send_message`. There is still no per-chat
+filtering: in `all` mode Claude can read every chat. Consider a test account for
+sensitive setups.
 
 ## Complete Revocation Checklist
 
